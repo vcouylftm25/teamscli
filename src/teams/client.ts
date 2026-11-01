@@ -4,7 +4,7 @@ import { CliError } from '../errors.ts';
  * Teams web services the CLI calls. Each has its own token (see docs/authentication.md).
  * `media` is the store of inline images; `sharepoint` the SharePoint or OneDrive site of an attached file.
  */
-export type Service = 'chatService' | 'csa' | 'media' | 'sharepoint';
+export type Service = 'chatService' | 'csa' | 'media' | 'sharepoint' | 'urlp';
 
 /** Base URLs for the account's region, discovered at login (`authz`). */
 export interface Endpoints {

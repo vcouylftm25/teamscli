@@ -16,6 +16,7 @@ const FENCE = /^\s*```\s*([\w+#.-]*)\s*$/;
 const HEADING = /^\s*(#{1,6})\s+(.*?)\s*#*\s*$/;
 const QUOTE = /^\s*>\s?(.*)$/;
 const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const RULE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
 const TABLE_SEPARATOR = /^\s*\|(\s*:?-+:?\s*\|)+\s*$/;
 
@@ -34,16 +35,21 @@ function blocks(lines: string[], state: { codeBlocks: number }): string {
     const fence = FENCE.exec(line);
     const heading = HEADING.exec(line);
     const item = ITEM.exec(line);
+    const rule = RULE.test(line);
     if (!line.trim()) {
       index++;
       continue;
     }
     // Teams renders consecutive paragraphs with no gap and writes a blank line as this empty paragraph;
     // lists, code blocks and the bottom of headings bring their own margin.
-    const spaced = !fence && !item;
+    const spaced = !fence && !item && !rule;
     if (gap && spaced) html += '<p>&nbsp;</p>';
     gap = spaced && !heading;
-    if (fence) {
+    if (rule) {
+      index++;
+      html += '<hr>';
+      gap = false;
+    } else if (fence) {
       index++;
       const code = take((next) => !FENCE.test(next) || FENCE.exec(next)![1] !== '');
       index++; // closing fence, if any
@@ -72,7 +78,7 @@ function blocks(lines: string[], state: { codeBlocks: number }): string {
 }
 
 function startsBlock(line: string): boolean {
-  return FENCE.test(line) || HEADING.test(line) || QUOTE.test(line) || ITEM.test(line) || TABLE_ROW.test(line);
+  return FENCE.test(line) || HEADING.test(line) || QUOTE.test(line) || ITEM.test(line) || RULE.test(line) || TABLE_ROW.test(line);
 }
 
 /** Consecutive items at the first item's indentation; deeper lines belong to the item above them. */

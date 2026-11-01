@@ -17,6 +17,7 @@ No runtime dependencies. A new dependency (runtime or dev) needs a justification
 |---|---|---|
 | `typescript` | dev | Type checking and the `dist/` build. |
 | `@types/node` | dev | Types for Node built-ins. |
+| `@resvg/resvg-wasm` | runtime | Rasterize discovered SVG favicons to small PNGs for Teams inline images, without native modules. |
 
 ## Layout
 

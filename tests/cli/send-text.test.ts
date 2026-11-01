@@ -17,6 +17,14 @@ import { getMessage, upsertMessages } from '../../src/store/messages.ts';
 const env = { TEAMSCLI_SECRET_STORE: 'file' };
 const chatService = 'https://chat.example.test';
 
+test('send text help documents preview and inline image options', async () => {
+  const run = await runTestCli(['send', 'text', '--help']);
+  assert.equal(run.code, 0);
+  assert.match(run.stdout, /--link-icons\s+Add each site favicon as a small inline image before its links\./);
+  assert.match(run.stdout, /--preview-link URL\s+Choose which link gets the single preview card/);
+  assert.match(run.stdout, /--image PATH\s+Upload an inline image; may be repeated\./);
+});
+
 test('send text resolves --to, escapes user HTML, and stores the returned message', async (t) => {
   const home = signedInHome();
   t.after(() => rmSync(home, { recursive: true, force: true }));

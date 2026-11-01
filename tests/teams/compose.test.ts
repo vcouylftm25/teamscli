@@ -53,6 +53,11 @@ test('markdown blocks become the HTML Teams itself produces', () => {
   assert.equal(toTeamsHtml('| not | a table |'), '<p>| not | a table |</p>');
 });
 
+test('horizontal rules render as hr blocks with paragraph spacing around surrounding text', () => {
+  assert.equal(toTeamsHtml('Before\n\n---\n\nAfter'), '<p>Before</p><hr><p>After</p>');
+  assert.equal(toTeamsHtml('---'), '<hr>');
+});
+
 test('fenced code keeps its text escaped, with a language and an id per block', () => {
   assert.equal(toTeamsHtml('```TypeScript\nif (a < b) {\n  **x**;\n}\n```\ntext\n```\nplain'),
     '<p itemtype="http://schema.skype.com/CodeBlockEditor" id="1">&nbsp;</p><pre class="language-typescript" itemid="1"><code>if (a &lt; b) {<br>  **x**;<br>}</code></pre>'
