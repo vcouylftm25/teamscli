@@ -79,27 +79,73 @@ export async function fetchLinkIcon(fetcher: typeof fetch, pageUrl: string): Pro
   return null;
 }
 
+/** Pixel size of every link icon. Teams draws an AMS image at its own pixel size, so the file itself is this small. */
+export const LINK_ICON_SIZE = 16;
+
 async function toInlineIcon(data: Uint8Array, contentTypeOrPath: string): Promise<LinkIcon | null> {
-  if (contentTypeOrPath.includes('svg') || isSvg(data)) {
-    try {
-      await wasmReady();
-      const svg = new Resvg(new TextDecoder().decode(data), { fitTo: { mode: 'width', value: 18 }, font: { loadSystemFonts: false } });
-      const png = svg.render().asPng();
-      svg.free();
-      return { data: new Uint8Array(png), format: 'png' };
-    } catch {
-      return null;
-    }
-  }
+  if (contentTypeOrPath.includes('svg') || isSvg(data)) return renderIcon(new TextDecoder().decode(data));
+  let raster: { bytes: Uint8Array; mime: string } | null = null;
   if (contentTypeOrPath.includes('icon') || isIco(data)) {
     const png = icoPngFrame(data) ?? icoBitmapFrame(data);
-    return png ? { data: new Uint8Array(png), format: 'png' } : null;
+    raster = png ? { bytes: png, mime: 'image/png' } : null;
+  } else if (contentTypeOrPath.includes('png') || isPng(data)) raster = { bytes: data, mime: 'image/png' };
+  else if (contentTypeOrPath.includes('jpeg') || contentTypeOrPath.includes('jpg') || isJpeg(data)) raster = { bytes: data, mime: 'image/jpeg' };
+  else if (contentTypeOrPath.includes('gif') || isGif(data)) raster = { bytes: data, mime: 'image/gif' };
+  else if (contentTypeOrPath.includes('webp') || isWebp(data)) raster = { bytes: data, mime: 'image/webp' };
+  if (!raster) return null;
+  const size = LINK_ICON_SIZE;
+  // resvg scales the bitmap for us; an icon it cannot decode is dropped rather than sent at full size.
+  return renderIcon(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`
+    + `<image width="${size}" height="${size}" preserveAspectRatio="xMidYMid meet" xlink:href="data:${raster.mime};base64,${Buffer.from(raster.bytes).toString('base64')}"/></svg>`);
+}
+
+/** Renders SVG markup to a LINK_ICON_SIZE square PNG, or null when it cannot be drawn. */
+async function renderIcon(svgText: string): Promise<LinkIcon | null> {
+  try {
+    await wasmReady();
+    const size = LINK_ICON_SIZE;
+    const svg = new Resvg(svgText, { fitTo: { mode: 'width', value: size }, font: { loadSystemFonts: false } });
+    try {
+      const rendered = svg.render();
+      if (rendered.width === 0 || rendered.height === 0) return null;
+      if (rendered.width !== size || rendered.height !== size) {
+        // Not square: draw it again centred in a square canvas so every icon has the same box.
+        const png = Buffer.from(rendered.asPng()).toString('base64');
+        rendered.free();
+        const square = new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`
+          + `<image width="${size}" height="${size}" preserveAspectRatio="xMidYMid meet" xlink:href="data:image/png;base64,${png}"/></svg>`, { fitTo: { mode: 'width', value: size }, font: { loadSystemFonts: false } });
+        try {
+          const out = square.render();
+          const bytes = new Uint8Array(out.asPng());
+          out.free();
+          return { data: bytes, format: 'png' };
+        } finally {
+          square.free();
+        }
+      }
+      // resvg draws a raster it cannot decode as an empty canvas; sending nothing beats a blank square.
+      const blank = isTransparent(rendered.pixels);
+      const bytes = new Uint8Array(rendered.asPng());
+      rendered.free();
+      return blank ? null : { data: bytes, format: 'png' };
+    } finally {
+      svg.free();
+    }
+  } catch {
+    return null;
   }
-  if (contentTypeOrPath.includes('png') || isPng(data)) return { data: new Uint8Array(data), format: 'png' };
-  if (contentTypeOrPath.includes('jpeg') || contentTypeOrPath.includes('jpg') || isJpeg(data)) return { data: new Uint8Array(data), format: 'jpg' };
-  if (contentTypeOrPath.includes('gif') || isGif(data)) return { data: new Uint8Array(data), format: 'gif' };
-  if (contentTypeOrPath.includes('webp') || isWebp(data)) return { data: new Uint8Array(data), format: 'webp' };
-  return null;
+}
+
+/** Width and height from a PNG header, or null for anything else. */
+export function pngSize(data: Uint8Array): { width: number; height: number } | null {
+  if (!isPng(data) || data.length < 24) return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
+function isTransparent(rgba: Uint8Array): boolean {
+  for (let index = 3; index < rgba.length; index += 4) if (rgba[index] !== 0) return false;
+  return true;
 }
 
 function attributes(tag: string): Record<string, string> {
@@ -153,7 +199,7 @@ function icoPngFrame(data: Uint8Array): Uint8Array | null {
     const length = (data[entry + 8]! | (data[entry + 9]! << 8) | (data[entry + 10]! << 16) | (data[entry + 11]! << 24)) >>> 0;
     const offset = (data[entry + 12]! | (data[entry + 13]! << 8) | (data[entry + 14]! << 16) | (data[entry + 15]! << 24)) >>> 0;
     const frame = data.subarray(offset, offset + length);
-    if (isPng(frame) && (!selected || Math.abs(size - 18) < Math.abs(selected.size - 18))) selected = { data: frame, size };
+    if (isPng(frame) && (!selected || Math.abs(size - LINK_ICON_SIZE) < Math.abs(selected.size - LINK_ICON_SIZE))) selected = { data: frame, size };
   }
   return selected?.data ?? null;
 }
@@ -196,7 +242,7 @@ function icoBitmapFrame(data: Uint8Array): Uint8Array | null {
     }
     if (bits === 32 && !hasAlpha) for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
     const png = encodePng(rgba, width, height);
-    if (!selected || Math.abs(size - 18) < Math.abs(selected.size - 18)) selected = { png, size };
+    if (!selected || Math.abs(size - LINK_ICON_SIZE) < Math.abs(selected.size - LINK_ICON_SIZE)) selected = { png, size };
   }
   return selected?.png ?? null;
 }

@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTeamsClient } from '../../src/teams/client.ts';
-import { deleteMessage, editText, sendText } from '../../src/teams/send.ts';
+import { deleteMessage, editText, sendText, sourceLabel, withLinkSources } from '../../src/teams/send.ts';
+import { pngSize } from '../../src/teams/link-icons.ts';
+import { solidPng } from '../helpers/png.ts';
 import { fakeFetch, fakeSession, TEST_ENDPOINTS } from '../helpers/fake-fetch.ts';
 import { aMessage } from '../helpers/builders.ts';
 
@@ -114,7 +116,7 @@ test('uploads one SVG favicon per domain and places its AMS image before each li
   assert.equal(fake.calls.find((call) => call.url === page)?.headers.authorization, undefined);
   const body = fake.calls.find((call) => call.method === 'POST' && call.url.endsWith('/messages'))?.body as Record<string, unknown>;
   assert.equal((body.content as string).match(/itemtype="http:\/\/schema\.skype\.com\/AMSImage"/g)?.length, 2, String(body.content));
-  assert.match(String(body.content), /vertical-align:middle"><a href="https:\/\/icons\.example\.test\/one">/);
+  assert.match(String(body.content), /<img [^>]*width="16" height="16" style="width:16px;height:16px;vertical-align:text-bottom">&nbsp;<a href="https:\/\/icons\.example\.test\/one">/);
   assert.deepEqual(body.amsreferences, ['0-synthetic-icon']);
 });
 
@@ -297,4 +299,54 @@ test('sends the link unchanged when its favicon cannot be fetched', async () => 
   assert.equal(String(body.content).includes('AMSImage'), false);
   assert.equal(body.amsreferences, undefined);
   assert.match(String(body.content), /<a href="https:\/\/plain\.example\.test\/post">/);
+});
+
+test('link sources add the site after each named link and skip links that already show it', () => {
+  assert.equal(sourceLabel('access.redhat.com'), 'redhat.com');
+  assert.equal(sourceLabel('www.cisa.gov'), 'cisa.gov');
+  assert.equal(sourceLabel('www.gov.br'), 'gov.br');
+  assert.equal(sourceLabel('noticias.uol.com.br'), 'uol.com.br');
+  assert.equal(sourceLabel('github.com'), 'github.com');
+  assert.equal(
+    withLinkSources('<p><a href="https://access.redhat.com/x?a=1&amp;b=2">Red Hat: boletim</a> and <a href="https://github.com/o/r">https://github.com/o/r</a></p>'),
+    '<p><a href="https://access.redhat.com/x?a=1&amp;b=2">Red Hat: boletim</a> <span style="font-size:12px;color:#616161">· redhat.com</span>'
+      + ' and <a href="https://github.com/o/r">https://github.com/o/r</a></p>',
+  );
+});
+
+test('compact radar post keeps every word, drops empty sections and puts icon and source on the link line', async () => {
+  const channel = '19:radar@example.test';
+  const text = [
+    '## 🤖 IA',
+    '**Item um**',
+    'O que aconteceu, explicado por inteiro.',
+    '> 💡 **Por que importa pra LFTM:** motivo completo.',
+    '',
+    '[Cursor Blog: aviso](https://cursor.com/blog/a)',
+    '',
+    '---',
+    '',
+    '## 📈 Mercado',
+    '',
+    '---',
+  ].join('\n');
+  const fake = fakeFetch([
+    { url: 'https://cursor.com/blog/a', text: '<link rel="icon" href="/i.png">', headers: { 'content-type': 'text/html' } },
+    { url: 'https://cursor.com/i.png', data: solidPng(64, 64), headers: { 'content-type': 'image/png' } },
+    { method: 'POST', url: 'https://us-api.asm.skype.com/v1/objects', status: 201, json: { id: '0-cursor-icon' } },
+    { method: 'PUT', url: 'https://us-api.asm.skype.com/v1/objects/0-cursor-icon/content/imgpsh', json: {} },
+    { method: 'POST', url: `${TEST_ENDPOINTS.chatService}/v1/users/ME/conversations/${encodeURIComponent(channel)}/messages`, status: 201, json: {} },
+    { url: messageUrl(channel), json: { messages: [], _metadata: {} } },
+  ]);
+  const client = createTeamsClient({ fetch: fake.fetch, session: fakeSession() });
+  await sendText(client, TEST_ENDPOINTS, { conversationId: channel, channelPost: true, text, compact: true, linkIcons: true, linkSources: true, fetch: fake.fetch });
+  const upload = fake.calls.find((call) => call.method === 'PUT' && call.url.includes('/content/imgpsh'));
+  assert.deepEqual(pngSize(upload!.body as Uint8Array), { width: 16, height: 16 });
+  const content = String((fake.calls.find((call) => call.method === 'POST' && call.url.endsWith('/messages'))?.body as Record<string, unknown>).content);
+  assert.equal(content.includes('Mercado'), false);
+  assert.equal(content.includes('<hr>'), false);
+  assert.equal(content.includes('&nbsp;</p>'), false);
+  for (const words of ['O que aconteceu, explicado por inteiro.', 'motivo completo.', 'Cursor Blog: aviso']) assert.ok(content.includes(words), words);
+  assert.match(content, /^<h3>🤖 IA<\/h3><p><strong>Item um<\/strong><br>O que aconteceu/);
+  assert.match(content, /<\/blockquote><p><img [^>]*width="16" height="16"[^>]*>&nbsp;<a href="https:\/\/cursor\.com\/blog\/a">Cursor Blog: aviso<\/a> <span style="font-size:12px;color:#616161">· cursor\.com<\/span><\/p>$/);
 });

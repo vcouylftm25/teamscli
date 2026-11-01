@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { maskMarkdownImages, quoteHtml, toTeamsHtml } from '../../src/teams/compose.ts';
+import { dropEmptySections, maskMarkdownImages, quoteHtml, toTeamsHtml } from '../../src/teams/compose.ts';
 import { htmlToText } from '../../src/teams/html.ts';
 
 test('paragraphs and line breaks', () => {
@@ -88,4 +88,20 @@ test('fenced code keeps its text escaped, with a language and an id per block', 
 
 test('text derived from tables and headings keeps words apart', () => {
   assert.equal(htmlToText(toTeamsHtml('# T\n| A | B |\n|---|---|\n| c | d |')), 'T A B c d');
+});
+
+test('compact layout tightens spacing without dropping any text', () => {
+  const text = '## A\n**Um**\nTexto.\n> por que\n\n[l](https://x.example/a)\n\n**Dois**\nMais.\n\n---\n\n## B\n\n---\n\n## C\nSem novidade.';
+  assert.equal(toTeamsHtml(text, { compact: true }),
+    '<h3>A</h3><p><strong>Um</strong><br>Texto.</p><blockquote><p>por que</p></blockquote><p><a href="https://x.example/a">l</a></p>'
+    + '<p>&nbsp;</p><p><strong>Dois</strong><br>Mais.</p><h3>C</h3><p>Sem novidade.</p>');
+  // The default layout is unchanged.
+  assert.equal(toTeamsHtml('a\n\n# T\n\nb'), '<p>a</p><p>&nbsp;</p><h2>T</h2><p>b</p>');
+});
+
+test('empty sections are found by heading level and code fences are left alone', () => {
+  assert.deepEqual(dropEmptySections(['# Top', '## Empty', '---', '## Full', 'x']), ['# Top', '## Full', 'x']);
+  assert.deepEqual(dropEmptySections(['# Only empties', '## A', '', '## B']), []);
+  assert.deepEqual(dropEmptySections(['```', '# not a heading', '```']), ['```', '# not a heading', '```']);
+  assert.deepEqual(dropEmptySections(['## Code', '```', '```']), ['## Code', '```', '```']);
 });

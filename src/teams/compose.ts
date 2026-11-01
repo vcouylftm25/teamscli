@@ -10,8 +10,57 @@
  * http or https (anything else stays literal text). Markdown images are not left as external `<img>` tags:
  * `maskMarkdownImages` lifts them out so the sender can upload them.
  */
-export function toTeamsHtml(text: string): string {
-  return blocks(text.replace(/\r\n?/g, '\n').split('\n'), { codeBlocks: 0 });
+export function toTeamsHtml(text: string, options: ComposeOptions = {}): string {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const compact = options.compact === true;
+  return blocks(compact ? dropEmptySections(lines) : lines, { codeBlocks: 0, compact });
+}
+
+export interface ComposeOptions {
+  /**
+   * Tighter layout for long posts that Teams would fold behind "see more": no `---` rules, `#`/`##`
+   * headings as h3, headings with nothing under them dropped, and a blank paragraph only before a
+   * paragraph that opens with bold text (the title of the next item), never around quotes or links.
+   */
+  compact?: boolean;
+}
+
+interface BlockState {
+  codeBlocks: number;
+  compact?: boolean;
+}
+
+/** Removes headings whose section (up to the next heading of the same or a higher level) holds only blank lines or rules. */
+export function dropEmptySections(lines: string[]): string[] {
+  let current = lines;
+  for (;;) {
+    const fenced = fencedLines(current);
+    const level = (index: number) => (fenced[index] ? 0 : HEADING.exec(current[index]!)?.[1]!.length ?? 0);
+    const drop = new Set<number>();
+    for (let index = 0; index < current.length; index++) {
+      const own = level(index);
+      if (own === 0) continue;
+      let end = index + 1;
+      while (end < current.length && !(level(end) > 0 && level(end) <= own)) end++;
+      const body = current.slice(index + 1, end);
+      if (body.every((line, offset) => !fenced[index + 1 + offset] && (!line.trim() || RULE.test(line)))) {
+        for (let next = index; next < end; next++) drop.add(next);
+      }
+    }
+    if (drop.size === 0) return current;
+    current = current.filter((_, index) => !drop.has(index));
+  }
+}
+
+function fencedLines(lines: string[]): boolean[] {
+  let open = false;
+  return lines.map((line) => {
+    if (FENCE.test(line)) {
+      if (!open) { open = true; return true; }
+      if (FENCE.exec(line)![1] === '') { open = false; return true; }
+    }
+    return open;
+  });
 }
 
 const FENCE = /^\s*```\s*([\w+#.-]*)\s*$/;
@@ -22,7 +71,7 @@ const RULE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
 const TABLE_SEPARATOR = /^\s*\|(?:\s*:?-{1,}:?\s*\|)+\s*$/;
 
-function blocks(lines: string[], state: { codeBlocks: number }): string {
+function blocks(lines: string[], state: BlockState): string {
   let html = '';
   let index = 0;
   let gap = false;
@@ -45,11 +94,17 @@ function blocks(lines: string[], state: { codeBlocks: number }): string {
     // Teams renders consecutive paragraphs with no gap and writes a blank line as this empty paragraph;
     // lists, code blocks and the bottom of headings bring their own margin.
     const spaced = !fence && !item && !rule;
-    if (gap && spaced) html += '<p>&nbsp;</p>';
-    gap = spaced && !heading;
+    if (state.compact) {
+      // Only the start of a new item gets air: a paragraph opening with bold text after other content.
+      if (gap && spaced && !heading && /^\s*\*\*/.test(line)) html += '<p>&nbsp;</p>';
+      gap = !heading && !rule;
+    } else {
+      if (gap && spaced) html += '<p>&nbsp;</p>';
+      gap = spaced && !heading;
+    }
     if (rule) {
       index++;
-      html += '<hr>';
+      if (!state.compact) html += '<hr>';
       gap = false;
     } else if (fence) {
       index++;
@@ -60,7 +115,7 @@ function blocks(lines: string[], state: { codeBlocks: number }): string {
         + `<pre class="language-${(fence[1] || 'plaintext').toLowerCase()}" itemid="${id}"><code>${code.map(escapeHtml).join('<br>')}</code></pre>`;
     } else if (heading) {
       index++;
-      const tag = heading[1]!.length <= 2 ? 'h2' : 'h3';
+      const tag = heading[1]!.length <= 2 && !state.compact ? 'h2' : 'h3';
       html += `<${tag}>${inline(heading[2]!)}</${tag}>`;
     } else if (QUOTE.test(line)) {
       const quoted = take((next) => QUOTE.test(next)).map((next) => QUOTE.exec(next)![1]!);
@@ -84,7 +139,7 @@ function startsBlock(line: string): boolean {
 }
 
 /** Consecutive items at the first item's indentation; deeper lines belong to the item above them. */
-function list(lines: string[], state: { codeBlocks: number }): string {
+function list(lines: string[], state: BlockState): string {
   const first = ITEM.exec(lines[0]!)!;
   const depth = first[1]!.length;
   const tag = /\d/.test(first[2]!) ? 'ol' : 'ul';
@@ -185,7 +240,7 @@ export interface MentionReference {
 }
 
 /** Renders mentions as Teams HTML and returns the references in content order. */
-export function toTeamsHtmlWithMentions(text: string, people: PersonMention[]): { content: string; mentions: MentionReference[] } {
+export function toTeamsHtmlWithMentions(text: string, people: PersonMention[], options: ComposeOptions = {}): { content: string; mentions: MentionReference[] } {
   const body = text.replace(/\r\n?/g, '\n');
   const normalized = normalizeWithOffsets(body);
   const ranges: Array<{ start: number; end: number; person: number }> = [];
@@ -220,7 +275,7 @@ export function toTeamsHtmlWithMentions(text: string, people: PersonMention[]): 
     displayName: people[person]!.displayName,
   }));
   // shortcut: multiple mention itemid sequencing is not live-verified; validate when Teams is available.
-  let content = toTeamsHtml(marked);
+  let content = toTeamsHtml(marked, options);
   for (let index = 0; index < people.length; index++) {
     const person = people[index]!;
     content = content.replaceAll(marker(index), `<readonly class="skipProofing" itemtype="http://schema.skype.com/Mention" spellcheck="false">`

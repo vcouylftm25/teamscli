@@ -22,6 +22,9 @@ test('send text help documents preview and inline image options', async () => {
   assert.equal(run.code, 0);
   assert.match(run.stdout, /--link-previews\s+Attach one link preview card\./);
   assert.match(run.stdout, /--link-icons\s+Add each site favicon as a small inline image before its links\./);
+  assert.match(run.stdout, /--link-sources\s+Show the site/);
+  assert.match(run.stdout, /--compact\s+Tighter spacing/);
+  assert.match(run.stdout, /--radar\s+Newsletter preset/);
   assert.match(run.stdout, /--preview-link URL\s+Choose which link gets the single preview card/);
   assert.match(run.stdout, /--image PATH\s+Upload an inline image; may be repeated\./);
 });

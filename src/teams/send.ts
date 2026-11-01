@@ -5,7 +5,7 @@ import { listMessages } from './messages.ts';
 import type { Endpoints, TeamsClient } from './client.ts';
 import { escapeHtml, maskMarkdownImages, quoteHtml, toTeamsHtml, toTeamsHtmlWithMentions, type MarkdownImageRef, type PersonMention, type QuotedMessage } from './compose.ts';
 import { uploadImage, type UploadedImage } from './files.ts';
-import { fetchLinkIcon } from './link-icons.ts';
+import { fetchLinkIcon, LINK_ICON_SIZE } from './link-icons.ts';
 
 export interface SendTextOptions {
   conversationId: string;
@@ -18,17 +18,21 @@ export interface SendTextOptions {
   linkPreviews?: boolean;
   previewLink?: string;
   linkIcons?: boolean;
+  /** Adds the link's site (`github.com`) in small grey text after each link. */
+  linkSources?: boolean;
+  /** Tighter layout; see `ComposeOptions.compact`. */
+  compact?: boolean;
   fetch?: typeof fetch;
   /** Reads a local markdown image. The CLI passes this; tests pass a fake. */
   readFile?: (path: string) => Uint8Array<ArrayBuffer>;
   images?: Array<{ name: string; format: string; data: Uint8Array<ArrayBuffer> }>;
 }
 
-export async function sendText(client: TeamsClient, endpoints: Endpoints, { conversationId, replyTo, channelPost, text, quote, mentions, subject, linkPreviews, previewLink, linkIcons, fetch: fetcher, readFile, images }: SendTextOptions): Promise<{ clientMessageId: string; message: Message | null }> {
+export async function sendText(client: TeamsClient, endpoints: Endpoints, { conversationId, replyTo, channelPost, text, quote, mentions, subject, linkPreviews, previewLink, linkIcons, linkSources, compact, fetch: fetcher, readFile, images }: SendTextOptions): Promise<{ clientMessageId: string; message: Message | null }> {
   const clientMessageId = newClientMessageId();
   const targetId = replyTo === undefined ? conversationId : `${conversationId};messageid=${replyTo}`;
   const masked = maskMarkdownImages(text);
-  const body: Record<string, any> = messageBody(masked.text, clientMessageId, quote, mentions);
+  const body: Record<string, any> = messageBody(masked.text, clientMessageId, quote, mentions, compact === true);
   const properties: Record<string, unknown> = { ...(body.properties ?? {}) };
   const amsreferences: string[] = [...(body.amsreferences ?? [])];
   if (subject && channelPost && replyTo === undefined) properties.subject = subject;
@@ -43,6 +47,7 @@ export async function sendText(client: TeamsClient, endpoints: Endpoints, { conv
     body.content += uploaded.map((image) => `<p>${amsImageTag(image, 'image')}</p>`).join('');
     amsreferences.push(...uploaded.map((image) => image.id));
   }
+  if (linkSources) body.content = withLinkSources(body.content);
   if (linkIcons && fetcher) {
     const icons = await withLinkIcons(client, body.content, conversationId, fetcher);
     body.content = icons.content;
@@ -67,7 +72,10 @@ export async function sendText(client: TeamsClient, endpoints: Endpoints, { conv
 }
 
 function amsImageTag(image: UploadedImage & { format: string }, alt: string, icon = false): string {
-  const size = icon ? ' width="18" height="18" style="vertical-align:middle"' : '';
+  // The icon file is already LINK_ICON_SIZE pixels; the attributes and the style say so again for
+  // clients that do honour them.
+  const px = LINK_ICON_SIZE;
+  const size = icon ? ` width="${px}" height="${px}" style="width:${px}px;height:${px}px;vertical-align:text-bottom"` : '';
   return `<img src="${escapeHtml(image.url)}" itemtype="http://schema.skype.com/AMSImage" itemscope="${escapeHtml(image.format)}" alt="${escapeHtml(alt)}" id="x_${escapeHtml(image.id)}" itemid="${escapeHtml(image.id)}"${size}>`;
 }
 
@@ -105,9 +113,34 @@ async function withLinkIcons(client: TeamsClient, content: string, conversationI
   const next = content.replace(/<a href="([^"]+)">/g, (whole, encoded: string) => {
     const image = byUrl.get(decodeHref(encoded));
     if (!image) return whole;
-    return `${amsImageTag(image, '', true)}${whole}`;
+    return `${amsImageTag(image, '', true)}&nbsp;${whole}`;
   });
   return { content: next, imageIds };
+}
+
+/** Appends ` · site.com` in small grey text after each link whose text does not already show its address. */
+export function withLinkSources(content: string): string {
+  return content.replace(/<a href="([^"]+)">([\s\S]*?)<\/a>/g, (whole, encoded: string, label: string) => {
+    let url: URL;
+    try { url = new URL(decodeHref(encoded)); } catch { return whole; }
+    const source = sourceLabel(url.hostname);
+    const text = label.replace(/<[^>]*>/g, '').toLowerCase();
+    if (!source || text.includes(source) || text.includes(url.hostname.toLowerCase())) return whole;
+    return `${whole} <span style="font-size:12px;color:#616161">· ${escapeHtml(source)}</span>`;
+  });
+}
+
+// Second-level labels under which the registrable name has three parts (gov.br, co.uk, com.br ...).
+const SHARED_SUFFIXES = new Set(['ac', 'co', 'com', 'edu', 'gov', 'net', 'org']);
+
+/** `access.redhat.com` -> `redhat.com`, `www.gov.br` -> `gov.br`; IP addresses stay as they are. */
+export function sourceLabel(hostname: string): string {
+  const host = hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
+  if (!host || /^[\d.]+$/.test(host) || host.includes(':')) return host;
+  const parts = host.split('.');
+  if (parts.length <= 2) return host;
+  const keep = SHARED_SUFFIXES.has(parts.at(-2)!) && parts.at(-1)!.length === 2 ? 3 : 2;
+  return parts.slice(-keep).join('.');
 }
 
 export interface SendAttachmentOptions {
@@ -171,10 +204,11 @@ async function firstMessage(
   return page.value?.messages.find(matches) ?? null;
 }
 
-function messageBody(text: string, clientMessageId: string, quote?: QuotedMessage, mentions?: PersonMention[]) {
-  const composed = mentions?.length ? toTeamsHtmlWithMentions(text, mentions) : null;
+function messageBody(text: string, clientMessageId: string, quote?: QuotedMessage, mentions?: PersonMention[], compact = false) {
+  const options = compact ? { compact } : {};
+  const composed = mentions?.length ? toTeamsHtmlWithMentions(text, mentions, options) : null;
   return {
-    content: `${quote ? quoteHtml(quote) : ''}${composed?.content ?? toTeamsHtml(text)}`,
+    content: `${quote ? quoteHtml(quote) : ''}${composed?.content ?? toTeamsHtml(text, options)}`,
     messagetype: 'RichText/Html',
     contenttype: 'text',
     clientmessageid: clientMessageId,
