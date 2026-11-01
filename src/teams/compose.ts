@@ -97,6 +97,8 @@ function blocks(lines: string[], state: BlockState): string {
     if (state.compact) {
       // Only the start of a new item gets air: a paragraph opening with bold text after other content.
       if (gap && spaced && !heading && /^\s*\*\*/.test(line)) html += '<p>&nbsp;</p>';
+      // Section headings after other content get air too, or Teams glues them to the previous link line.
+      if (heading && html) html += '<p>&nbsp;</p>';
       gap = !heading && !rule;
     } else {
       if (gap && spaced) html += '<p>&nbsp;</p>';

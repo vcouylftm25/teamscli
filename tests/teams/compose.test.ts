@@ -94,7 +94,7 @@ test('compact layout tightens spacing without dropping any text', () => {
   const text = '## A\n**Um**\nTexto.\n> por que\n\n[l](https://x.example/a)\n\n**Dois**\nMais.\n\n---\n\n## B\n\n---\n\n## C\nSem novidade.';
   assert.equal(toTeamsHtml(text, { compact: true }),
     '<h3>A</h3><p><strong>Um</strong><br>Texto.</p><blockquote><p>por que</p></blockquote><p><a href="https://x.example/a">l</a></p>'
-    + '<p>&nbsp;</p><p><strong>Dois</strong><br>Mais.</p><h3>C</h3><p>Sem novidade.</p>');
+    + '<p>&nbsp;</p><p><strong>Dois</strong><br>Mais.</p><p>&nbsp;</p><h3>C</h3><p>Sem novidade.</p>');
   // The default layout is unchanged.
   assert.equal(toTeamsHtml('a\n\n# T\n\nb'), '<p>a</p><p>&nbsp;</p><h2>T</h2><p>b</p>');
 });
