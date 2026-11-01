@@ -63,6 +63,7 @@ function parseBody(body: string): unknown {
 export const TEST_ENDPOINTS: Endpoints = {
   chatService: 'https://chat.example.test',
   csa: 'https://csa.example.test/api/csa/test',
+  urlp: 'https://urlp.example.test/urlp',
 };
 
 /** Session with fixed, obviously fake credentials. */

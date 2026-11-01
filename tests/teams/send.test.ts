@@ -121,9 +121,10 @@ test('uploads one SVG favicon per domain and places its AMS image before each li
 test('URLP supplies authenticated preview metadata and only the selected link gets a card', async () => {
   const channel = '19:preview@example.test';
   const selected = 'https://second.example.test/page';
-  const urlp = `https://chat-prod.asyncgw.teams.microsoft.com/urlp/v1/url/info?url=${encodeURIComponent(selected)}`;
+  const urlp = `${TEST_ENDPOINTS.urlp}/v1/url/info?url=${encodeURIComponent(selected)}`;
+  const thumbnail = `https://us-prod.asyncgw.teams.microsoft.com/urlp/v1/url/image/Thumbnail?url=${encodeURIComponent('https://cdn.example.test/card.png?w=1&h=2')}`;
   const fake = fakeFetch([
-    { url: urlp, json: { title: 'URLP title', description: 'URLP summary', image: 'https://cdn.example.test/card.png', token: 'synthetic-image-token' } },
+    { url: urlp, json: { title: 'URLP title', description: 'URLP summary', thumbnail, image: { url: 'https://cdn.example.test/card.png?w=1&h=2' } } },
     { method: 'POST', url: `${TEST_ENDPOINTS.chatService}/v1/users/ME/conversations/${encodeURIComponent(channel)}/messages`, status: 201, json: {} },
     { url: messageUrl(channel), json: { messages: [], _metadata: {} } },
   ]);
@@ -131,6 +132,7 @@ test('URLP supplies authenticated preview metadata and only the selected link ge
   await sendText(client, TEST_ENDPOINTS, {
     conversationId: channel,
     channelPost: true,
+    subject: 'Weekly',
     text: 'First https://first.example.test/ and second https://second.example.test/page',
     linkPreviews: true,
     previewLink: selected,
@@ -141,18 +143,80 @@ test('URLP supplies authenticated preview metadata and only the selected link ge
   const body = fake.calls.find((call) => call.method === 'POST' && call.url.endsWith('/messages'))?.body as Record<string, unknown>;
   const links = JSON.parse(String((body.properties as Record<string, unknown>).links)) as Array<Record<string, any>>;
   assert.equal(links.length, 1);
+  assert.equal(links[0]?.['@type'], 'http://schema.skype.com/HyperLink');
+  assert.equal(links[0]?.itemid, '0');
   assert.equal(links[0]?.url, selected);
+  assert.equal(links[0]?.previewenabled, true);
   assert.equal(links[0]?.preview.title, 'URLP title');
   assert.equal(links[0]?.preview.description, 'URLP summary');
-  assert.equal(links[0]?.preview.previewurl, `https://chat-prod.asyncgw.teams.microsoft.com/urlp/v1/url/image/Thumbnail?url=${encodeURIComponent('https://cdn.example.test/card.png')}&token=synthetic-image-token`);
+  assert.equal(links[0]?.preview.previewurl, thumbnail);
+  assert.match(String(body.content), new RegExp(`<a href="${selected}" itemtype="http://schema.skype.com/HyperLink" rel="noreferrer noopener" target="_blank" itemid="0">`));
+  assert.doesNotMatch(String(body.content), /first\.example\.test\/" itemtype=/);
+  assert.equal((body.properties as Record<string, unknown>).subject, 'Weekly');
+  assert.equal(body.postType, 'Standard');
+});
+
+test('builds an encoded thumbnail when URLP returns only the image, and refuses another host', async () => {
+  const channel = '19:encoded@example.test';
+  const page = 'https://encoded.example.test/a?b=1&c=2';
+  const image = 'https://cdn.example.test/card.png?w=1&h=2';
+  const fake = fakeFetch([
+    { url: `${TEST_ENDPOINTS.urlp}/v1/url/info?url=${encodeURIComponent(page)}`, json: { title: 'Encoded', description: 'Query', thumbnail: 'https://evil.example.test/pixel.png', image } },
+    { method: 'POST', url: `${TEST_ENDPOINTS.chatService}/v1/users/ME/conversations/${encodeURIComponent(channel)}/messages`, status: 201, json: {} },
+    { url: messageUrl(channel), json: { messages: [], _metadata: {} } },
+  ]);
+  const client = createTeamsClient({ fetch: fake.fetch, session: fakeSession() });
+  await sendText(client, TEST_ENDPOINTS, {
+    conversationId: channel,
+    text: `See ${page} and https://other.example.test/`,
+    linkPreviews: true,
+    fetch: fake.fetch,
+  });
+  const body = fake.calls.find((call) => call.method === 'POST' && call.url.endsWith('/messages'))?.body as Record<string, unknown>;
+  const links = JSON.parse(String((body.properties as Record<string, unknown>).links)) as Array<Record<string, any>>;
+  const previewurl = String(links[0]?.preview.previewurl);
+  assert.equal(links[0]?.url, page);
+  assert.equal(previewurl, `${TEST_ENDPOINTS.urlp}/v1/url/image/Thumbnail?url=${encodeURIComponent(image)}`);
+  assert.equal(new URL(previewurl).searchParams.get('url'), image);
+  assert.equal(previewurl.includes('evil.example.test'), false);
+  assert.match(String(body.content), /itemid="0">https:\/\/encoded\.example\.test\/a\?b=1&amp;c=2</);
+  assert.doesNotMatch(String(body.content), /other\.example\.test\/" itemtype=/);
+});
+
+test('--preview-link must match a link and a subject is ignored on a reply', async () => {
+  const fake = fakeFetch([]);
+  const client = createTeamsClient({ fetch: fake.fetch, session: fakeSession() });
+  await assert.rejects(() => sendText(client, TEST_ENDPOINTS, {
+    conversationId: channelId,
+    text: 'See https://first.example.test/',
+    linkPreviews: true,
+    previewLink: 'https://missing.example.test/',
+    fetch: fake.fetch,
+  }), { code: 'usage' });
+  assert.equal(fake.calls.length, 0);
+
+  const posted = fakeFetch([
+    { method: 'POST', url: `${TEST_ENDPOINTS.chatService}/v1/users/ME/conversations/${encodeURIComponent(channelId)};messageid=1767261600000/messages`, status: 201, json: {} },
+    { url: messageUrl(`${channelId};messageid=1767261600000`), json: { messages: [], _metadata: {} } },
+  ]);
+  await sendText(createTeamsClient({ fetch: posted.fetch, session: fakeSession() }), TEST_ENDPOINTS, {
+    conversationId: channelId,
+    replyTo: '1767261600000',
+    channelPost: true,
+    subject: 'Not a root',
+    text: 'Reply',
+  });
+  const body = posted.calls[0]?.body as Record<string, unknown>;
+  assert.equal(body.properties, undefined);
+  assert.equal('postType' in body, false);
 });
 
 test('falls back to public page metadata when URLP is unavailable and uploads repeated inline images', async () => {
   const channel = '19:fallback@example.test';
   const page = 'https://fallback.example.test/page';
   const fake = fakeFetch([
-    { url: `https://chat-prod.asyncgw.teams.microsoft.com/urlp/v1/url/info?url=${encodeURIComponent(page)}`, status: 503 },
-    { url: page, text: '<meta property="og:title" content="Fallback title"><meta property="og:image" content="/card.png">', headers: { 'content-type': 'text/html' } },
+    { url: `${TEST_ENDPOINTS.urlp}/v1/url/info?url=${encodeURIComponent(page)}`, status: 503 },
+    { url: page, text: '<meta content="Fallback title" property="og:title"><meta content="/card.png" property="og:image">', headers: { 'content-type': 'text/html' } },
     { method: 'POST', url: 'https://us-api.asm.skype.com/v1/objects', times: 1, status: 201, json: { id: '0-inline-one' } },
     { method: 'PUT', url: 'https://us-api.asm.skype.com/v1/objects/0-inline-one/content/imgpsh', json: {} },
     { method: 'POST', url: 'https://us-api.asm.skype.com/v1/objects', status: 201, json: { id: '0-inline-two' } },
@@ -176,7 +240,61 @@ test('falls back to public page metadata when URLP is unavailable and uploads re
   const links = JSON.parse(String((body.properties as Record<string, unknown>).links)) as Array<Record<string, any>>;
   assert.equal(links.length, 1);
   assert.equal(links[0]?.preview.title, 'Fallback title');
-  assert.equal(links[0]?.preview.previewurl, 'https://chat-prod.asyncgw.teams.microsoft.com/urlp/v1/url/image/Thumbnail?url=https%3A%2F%2Ffallback.example.test%2Fcard.png');
+  assert.equal(links[0]?.preview.previewurl, `${TEST_ENDPOINTS.urlp}/v1/url/image/Thumbnail?url=${encodeURIComponent('https://fallback.example.test/card.png')}`);
+  assert.equal(fake.calls.find((call) => call.url === page)?.headers.authorization, undefined);
   assert.deepEqual(body.amsreferences, ['0-inline-one', '0-inline-two']);
   assert.equal((body.content as string).match(/itemtype="http:\/\/schema\.skype\.com\/AMSImage"/g)?.length, 2);
+});
+
+test('uploads markdown images through AMS and leaves the external address out of the message', async () => {
+  const channel = '19:markdown-image@example.test';
+  const remote = 'https://cdn.example.test/photos/chart.png';
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9]);
+  const fake = fakeFetch([
+    { url: remote, data: png, headers: { 'content-type': 'image/png' } },
+    { method: 'POST', url: 'https://us-api.asm.skype.com/v1/objects', times: 1, status: 201, json: { id: '0-remote-image' } },
+    { method: 'PUT', url: 'https://us-api.asm.skype.com/v1/objects/0-remote-image/content/imgpsh', json: {} },
+    { method: 'POST', url: 'https://us-api.asm.skype.com/v1/objects', status: 201, json: { id: '0-local-image' } },
+    { method: 'PUT', url: 'https://us-api.asm.skype.com/v1/objects/0-local-image/content/imgpsh', json: {} },
+    { method: 'POST', url: `${TEST_ENDPOINTS.chatService}/v1/users/ME/conversations/${encodeURIComponent(channel)}/messages`, status: 201, json: {} },
+    { url: messageUrl(channel), json: { messages: [], _metadata: {} } },
+  ]);
+  const client = createTeamsClient({ fetch: fake.fetch, session: fakeSession() });
+  await sendText(client, TEST_ENDPOINTS, {
+    conversationId: channel,
+    text: `Before ![Chart](${remote}) after ![local](images/banner.jpg)`,
+    fetch: fake.fetch,
+    readFile: (path) => {
+      assert.equal(path, 'images/banner.jpg');
+      return new Uint8Array([0xff, 0xd8, 0xff, 1]);
+    },
+  });
+  assert.equal(fake.calls.find((call) => call.url === remote)?.headers.authorization, undefined);
+  const body = fake.calls.find((call) => call.method === 'POST' && call.url.endsWith('/messages'))?.body as Record<string, unknown>;
+  assert.equal(String(body.content).includes(remote), false);
+  assert.match(String(body.content), /Before <img [^>]*alt="Chart"[^>]*itemid="0-remote-image"[^>]*> after <img [^>]*itemid="0-local-image"/);
+  assert.equal(String(body.content).includes('images/banner.jpg'), false);
+  assert.deepEqual(body.amsreferences, ['0-remote-image', '0-local-image']);
+});
+
+test('sends the link unchanged when its favicon cannot be fetched', async () => {
+  const channel = '19:no-icon@example.test';
+  const page = 'https://plain.example.test/post';
+  const fake = fakeFetch([
+    { url: page, status: 500 },
+    { url: 'https://plain.example.test/favicon.ico', status: 404 },
+    { method: 'POST', url: `${TEST_ENDPOINTS.chatService}/v1/users/ME/conversations/${encodeURIComponent(channel)}/messages`, status: 201, json: {} },
+    { url: messageUrl(channel), json: { messages: [], _metadata: {} } },
+  ]);
+  const client = createTeamsClient({ fetch: fake.fetch, session: fakeSession() });
+  await sendText(client, TEST_ENDPOINTS, {
+    conversationId: channel,
+    text: `Read ${page}`,
+    linkIcons: true,
+    fetch: fake.fetch,
+  });
+  const body = fake.calls.find((call) => call.method === 'POST' && call.url.endsWith('/messages'))?.body as Record<string, unknown>;
+  assert.equal(String(body.content).includes('AMSImage'), false);
+  assert.equal(body.amsreferences, undefined);
+  assert.match(String(body.content), /<a href="https:\/\/plain\.example\.test\/post">/);
 });

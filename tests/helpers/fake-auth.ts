@@ -34,5 +34,9 @@ export function tokenResponse(accessToken: string, refreshToken: string | null, 
 export const AUTHZ_ROUTE: FakeRoute = {
   method: 'POST',
   url: AUTHZ_URL,
-  json: { tokens: { skypeToken: 'test-skypetoken', expiresIn: 86400 }, region: 'test', regionGtms: { chatService: 'https://chat.example.test/' } },
+  json: {
+    tokens: { skypeToken: 'test-skypetoken', expiresIn: 86400 },
+    region: 'test',
+    regionGtms: { chatService: 'https://chat.example.test/', urlpV2: 'https://urlp.example.test/urlp/' },
+  },
 };

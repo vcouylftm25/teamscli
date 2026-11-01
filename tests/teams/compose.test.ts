@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { quoteHtml, toTeamsHtml } from '../../src/teams/compose.ts';
+import { maskMarkdownImages, quoteHtml, toTeamsHtml } from '../../src/teams/compose.ts';
 import { htmlToText } from '../../src/teams/html.ts';
 
 test('paragraphs and line breaks', () => {
@@ -49,13 +49,33 @@ test('markdown blocks become the HTML Teams itself produces', () => {
     '<p>Steps:</p><ul><li>one</li><li><strong>two</strong><ul><li>nested</li></ul></li><li>first</li></ul>');
   assert.equal(toTeamsHtml('1. a\n2. b'), '<ol><li>a</li><li>b</li></ol>');
   assert.equal(toTeamsHtml('> quoted\n> - item'), '<blockquote><p>quoted</p><ul><li>item</li></ul></blockquote>');
-  assert.equal(toTeamsHtml('| A | B |\n|---|:-:|\n| `x` | <y> |'), '<table><tbody><tr><th>A</th><th>B</th></tr><tr><td><code>x</code></td><td>&lt;y&gt;</td></tr></tbody></table>');
+  assert.equal(toTeamsHtml('| A | B |\n| --- | :---: |\n| `x` | <y> |'),
+    '<table><tbody><tr><td><p><strong>A</strong></p></td><td><p><strong>B</strong></p></td></tr><tr><td><p><code>x</code></p></td><td><p>&lt;y&gt;</p></td></tr></tbody></table>');
   assert.equal(toTeamsHtml('| not | a table |'), '<p>| not | a table |</p>');
+  assert.equal(toTeamsHtml('| A | B |\n|---|---|\n|  | d |').includes('<hr>'), false);
+  assert.equal(toTeamsHtml('| only | two |\n| - | - |\n| c | d |'),
+    '<table><tbody><tr><td><p><strong>only</strong></p></td><td><p><strong>two</strong></p></td></tr><tr><td><p>c</p></td><td><p>d</p></td></tr></tbody></table>');
 });
 
 test('horizontal rules render as hr blocks with paragraph spacing around surrounding text', () => {
   assert.equal(toTeamsHtml('Before\n\n---\n\nAfter'), '<p>Before</p><hr><p>After</p>');
   assert.equal(toTeamsHtml('---'), '<hr>');
+  assert.equal(toTeamsHtml('***'), '<hr>');
+  assert.equal(toTeamsHtml('___'), '<hr>');
+  assert.equal(toTeamsHtml('hello --- world'), '<p>hello --- world</p>');
+  assert.equal(htmlToText(toTeamsHtml('Before\n\n---\n\nAfter')), 'Before After');
+});
+
+test('markdown images become placeholders outside code and stay text otherwise', () => {
+  const masked = maskMarkdownImages('See ![Chart](https://cdn.example.test/a.png?w=1) and ![local](./pic.jpg)\n```\n![skip](https://cdn.example.test/b.png)\n```\n`![no](https://cdn.example.test/c.png)` ![page](https://cdn.example.test/page) ![js](javascript:alert(1))');
+  assert.equal(masked.images.map((image) => `${image.kind}:${image.target}`).join('|'),
+    'remote:https://cdn.example.test/a.png?w=1|file:./pic.jpg|remote:https://cdn.example.test/page');
+  assert.equal(masked.text.includes('![Chart]'), false);
+  assert.match(masked.text, /```\n!\[skip\]\(https:\/\/cdn\.example\.test\/b\.png\)\n```/);
+  assert.match(masked.text, /`!\[no\]\(https:\/\/cdn\.example\.test\/c\.png\)`/);
+  assert.match(masked.text, /!\[js\]\(javascript:alert\(1\)\)/);
+  assert.equal(maskMarkdownImages('no image').text, 'no image');
+  assert.equal(toTeamsHtml(masked.text).includes(masked.images[0]!.marker), true);
 });
 
 test('fenced code keeps its text escaped, with a language and an id per block', () => {

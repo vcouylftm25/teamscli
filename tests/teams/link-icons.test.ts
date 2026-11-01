@@ -24,6 +24,17 @@ test('tries apple-touch-icon before rel=icon and falls back to /favicon.ico', as
   ]);
 });
 
+test('tries /favicon.ico when the page itself cannot be fetched', async () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 2]);
+  const fake = fakeFetch([
+    { url: 'https://site.example.test/missing', status: 500 },
+    { url: 'https://site.example.test/favicon.ico', data: png, headers: { 'content-type': 'image/png' } },
+  ]);
+  const icon = await fetchLinkIcon(fake.fetch, 'https://site.example.test/missing');
+  assert.equal(icon?.format, 'png');
+  assert.deepEqual([...icon!.data], [...png]);
+});
+
 test('returns no icon when page and fallback icon are unavailable', async () => {
   const fake = fakeFetch([
     { url: 'https://site.example.test/page', text: '<html></html>', headers: { 'content-type': 'text/html' } },

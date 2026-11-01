@@ -12,6 +12,12 @@ export interface Endpoints {
   chatService: string;
   /** e.g. `https://teams.microsoft.com/api/csa/<region>`; teams and channels list. */
   csa: string;
+  /**
+   * URL preview service from authz `regionGtms.urlpV2`
+   * (e.g. `https://us-prod.asyncgw.teams.microsoft.com/urlp`), else `regionGtms.urlp`.
+   * Null when authz omits both.
+   */
+  urlp: string | null;
 }
 
 /** Implemented by auth/: valid credentials for each service, refreshed as needed. */
@@ -110,7 +116,7 @@ export function createTeamsClient({ fetch, session, sleep = defaultSleep, maxRet
    * including the last, empty one: its `syncState` is the checkpoint. `key` names the items array
    * (`conversations`, `messages`). Page order is not chronological; upsert by id.
    */
-  async function* pages<T>(service: keyof Endpoints, url: string, key: string): AsyncGenerator<Page<T>> {
+  async function* pages<T>(service: 'chatService' | 'csa', url: string, key: string): AsyncGenerator<Page<T>> {
     const origin = new URL((await session.endpoints())[service]).origin;
     let next: string | null = url;
     while (next) {

@@ -22,7 +22,7 @@ const namedEntities: Record<string, string> = {
 
 /** Convert Teams HTML message content to the plain text used by search. */
 export function htmlToText(html: string): string {
-  return decodeEntities(html.replace(/<\s*\/?\s*(?:br|p|div|li|h[1-6]|blockquote|pre|t[dhr])\b[^>]*>/gi, ' ').replace(/<[^>]*>/g, ''))
+  return decodeEntities(html.replace(/<\s*\/?\s*(?:br|hr|p|div|li|h[1-6]|blockquote|pre|t[dhr])\b[^>]*>/gi, ' ').replace(/<[^>]*>/g, ''))
     .replace(/\s+/g, ' ')
     .trim();
 }

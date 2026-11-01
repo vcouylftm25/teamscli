@@ -20,6 +20,7 @@ const chatService = 'https://chat.example.test';
 test('send text help documents preview and inline image options', async () => {
   const run = await runTestCli(['send', 'text', '--help']);
   assert.equal(run.code, 0);
+  assert.match(run.stdout, /--link-previews\s+Attach one link preview card\./);
   assert.match(run.stdout, /--link-icons\s+Add each site favicon as a small inline image before its links\./);
   assert.match(run.stdout, /--preview-link URL\s+Choose which link gets the single preview card/);
   assert.match(run.stdout, /--image PATH\s+Upload an inline image; may be repeated\./);
@@ -292,6 +293,46 @@ test('--quote prepends an escaped blockquote and warns that Teams did not verify
   assert.match(content, /quoted &lt;text&gt;/);
   assert.doesNotMatch(content, /<Bob|<text>/);
   assert.match(run.stderr, /not verified by Teams/);
+});
+
+test('send text rejects a preview link without previews and sends a channel subject', async (t) => {
+  const home = signedInHome();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const channelId = '19:channel-subject@example.test';
+  seed(home, [aConversation({ id: channelId, kind: 'channel', title: 'Example channel' })]);
+  const missing = await runTestCli(['--store', home, '--account', 'work', 'send', 'text', '--channel', channelId, '--preview-link', 'https://example.com/a', '--message', 'Hi'], { env });
+  assert.equal(missing.code, 2);
+  assert.match(missing.stderr, /--preview-link requires --link-previews/);
+
+  const fake = authenticatedFetch([
+    { method: 'POST', url: `${chatService}/v1/users/ME/conversations/${encodeURIComponent(channelId)}/messages`, status: 201, json: {} },
+    { url: messagePage(channelId), json: { messages: [], _metadata: {} } },
+  ]);
+  const run = await runTestCli(['--store', home, '--account', 'work', 'send', 'text', '--channel', channelId, '--subject', 'Weekly note', '--message', 'Hello'], { env, fetch: fake.fetch });
+  assert.equal(run.code, 0, run.stderr);
+  const body = chatCalls(fake.calls)[0]?.body as Record<string, unknown>;
+  assert.equal((body.properties as Record<string, unknown>).subject, 'Weekly note');
+  assert.equal(body.postType, 'Standard');
+});
+
+test('send text uploads a local --image through AMS', async (t) => {
+  const home = signedInHome();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const channelId = '19:channel-image@example.test';
+  seed(home, [aConversation({ id: channelId, kind: 'channel' })]);
+  const image = join(home, 'banner.png');
+  writeFileSync(image, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]));
+  const fake = authenticatedFetch([
+    { method: 'POST', url: 'https://us-api.asm.skype.com/v1/objects', status: 201, json: { id: '0-cli-image' } },
+    { method: 'PUT', url: 'https://us-api.asm.skype.com/v1/objects/0-cli-image/content/imgpsh', json: {} },
+    { method: 'POST', url: `${chatService}/v1/users/ME/conversations/${encodeURIComponent(channelId)}/messages`, status: 201, json: {} },
+    { url: messagePage(channelId), json: { messages: [], _metadata: {} } },
+  ]);
+  const run = await runTestCli(['--store', home, '--account', 'work', 'send', 'text', '--channel', channelId, '--image', image, '--message', 'Chart'], { env, fetch: fake.fetch });
+  assert.equal(run.code, 0, run.stderr);
+  const body = chatCalls(fake.calls).find((call) => call.method === 'POST')?.body as Record<string, unknown>;
+  assert.deepEqual(body.amsreferences, ['0-cli-image']);
+  assert.match(String(body.content), /<p>Chart<\/p><p><img [^>]*itemid="0-cli-image"/);
 });
 
 test('send text creates and stores a root channel post', async (t) => {

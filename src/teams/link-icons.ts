@@ -9,27 +9,48 @@ export interface LinkIcon {
 }
 
 const require = createRequire(import.meta.url);
+const USER_AGENT = 'Mozilla/5.0 (compatible; teamscli link icon)';
+// resvg throws if initWasm runs twice; this promise is the one shared initialization.
+let wasm: Promise<void> | null = null;
+
+function wasmReady(): Promise<void> {
+  if (!wasm) {
+    const bytes = readFileSync(require.resolve('@resvg/resvg-wasm/index_bg.wasm'));
+    wasm = initWasm(bytes).catch((error: unknown) => {
+      wasm = null;
+      throw error;
+    });
+  }
+  return wasm;
+}
 
 /** Finds and downloads one public favicon for a link's site. */
 export async function fetchLinkIcon(fetcher: typeof fetch, pageUrl: string): Promise<LinkIcon | null> {
-  let page: Response;
+  let pageBase: URL;
   try {
-    page = await fetcher(pageUrl, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; teamscli link icon)' }, redirect: 'follow', signal: AbortSignal.timeout(8000) });
-    if (!page.ok || !page.headers.get('content-type')?.toLowerCase().includes('text/html')) return null;
+    pageBase = new URL(pageUrl);
   } catch {
     return null;
   }
-  const html = (await safeText(page)).slice(0, 300_000);
-  const pageBase = safeUrl(page.url || pageUrl, pageUrl);
+  if (!['https:', 'http:'].includes(pageBase.protocol) || pageBase.username || pageBase.password) return null;
   const candidates: string[] = [];
-  for (const tag of html.matchAll(/<link\b[^>]*>/gi)) {
-    const attrs = attributes(tag[0]);
-    if (!attrs.href || /^data:/i.test(attrs.href)) continue;
-    const rel = (attrs.rel ?? '').toLowerCase().split(/\s+/);
-    const apple = rel.includes('apple-touch-icon') || rel.includes('apple-touch-icon-precomposed');
-    const icon = rel.includes('icon') || rel.includes('shortcut');
-    if (apple) candidates.unshift(attrs.href);
-    else if (icon) candidates.push(attrs.href);
+  try {
+    const page = await fetcher(pageUrl, { headers: { 'user-agent': USER_AGENT }, redirect: 'follow', signal: AbortSignal.timeout(8000) });
+    if (page.ok && page.headers.get('content-type')?.toLowerCase().includes('text/html')) {
+      const html = (await safeText(page)).slice(0, 300_000);
+      pageBase = safeUrl(page.url || pageUrl, pageUrl);
+      for (const tag of html.matchAll(/<link\b[^>]*>/gi)) {
+        const attrs = attributes(tag[0]);
+        if (!attrs.href || /^data:/i.test(attrs.href)) continue;
+        const rel = (attrs.rel ?? '').toLowerCase().split(/\s+/);
+        const apple = rel.includes('apple-touch-icon') || rel.includes('apple-touch-icon-precomposed');
+        const icon = rel.includes('icon') || rel.includes('shortcut');
+        if (apple) candidates.unshift(attrs.href);
+        else if (icon) candidates.push(attrs.href);
+      }
+    }
+  } catch {
+    // The site's /favicon.ico can still exist when the page itself does not answer.
   }
   candidates.push('/favicon.ico');
   const unique = new Set<string>();
@@ -44,7 +65,7 @@ export async function fetchLinkIcon(fetcher: typeof fetch, pageUrl: string): Pro
       continue;
     }
     try {
-      const response = await fetcher(iconUrl, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; teamscli link icon)' }, redirect: 'follow', signal: AbortSignal.timeout(8000) });
+      const response = await fetcher(iconUrl, { headers: { 'user-agent': USER_AGENT }, redirect: 'follow', signal: AbortSignal.timeout(8000) });
       if (!response.ok) continue;
       const type = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
       const bytes = new Uint8Array(await response.arrayBuffer());
@@ -61,7 +82,7 @@ export async function fetchLinkIcon(fetcher: typeof fetch, pageUrl: string): Pro
 async function toInlineIcon(data: Uint8Array, contentTypeOrPath: string): Promise<LinkIcon | null> {
   if (contentTypeOrPath.includes('svg') || isSvg(data)) {
     try {
-      await initWasm(readFileSync(require.resolve('@resvg/resvg-wasm/index_bg.wasm')));
+      await wasmReady();
       const svg = new Resvg(new TextDecoder().decode(data), { fitTo: { mode: 'width', value: 18 }, font: { loadSystemFonts: false } });
       const png = svg.render().asPng();
       svg.free();

@@ -14,7 +14,19 @@ export interface Authorization {
 interface AuthzResponse {
   tokens?: { skypeToken?: string; expiresIn?: number };
   region?: string;
-  regionGtms?: { chatService?: string };
+  regionGtms?: { chatService?: string; urlp?: string; urlpV2?: string };
+}
+
+/** Keeps an https URL-preview base from authz and drops a trailing slash. Anything else is unusable. */
+function urlpBase(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') return null;
+    return `${url.origin}${url.pathname}`.replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
 }
 
 /** Exchanges a `spaces` access token for the skypetoken and the account's regional endpoints. */
@@ -45,6 +57,11 @@ export async function authorize(spacesToken: string, { fetch, now }: { fetch: ty
     skypeToken,
     expiresAt: new Date(now().getTime() + Number(body.tokens?.expiresIn ?? 3600) * 1000),
     region,
-    endpoints: { chatService: chatService.replace(/\/+$/, ''), csa: `https://teams.microsoft.com/api/csa/${region}` },
+    endpoints: {
+      chatService: chatService.replace(/\/+$/, ''),
+      csa: `https://teams.microsoft.com/api/csa/${region}`,
+      // urlpV2 is the regional async gateway (`https://us-prod.asyncgw.teams.microsoft.com/urlp`). The chat host is not.
+      urlp: urlpBase(body.regionGtms?.urlpV2) ?? urlpBase(body.regionGtms?.urlp),
+    },
   };
 }

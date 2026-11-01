@@ -32,7 +32,7 @@ test('authenticates each service, caching tokens and authz within the process', 
   assert.deepEqual(await session.headers('chatService'), { authentication: 'skypetoken=test-skypetoken' });
   assert.deepEqual(await session.headers('csa'), { authorization: 'Bearer test-chatsvcagg-token' });
   assert.deepEqual(await session.headers('urlp', 'https://us-prod.asyncgw.teams.microsoft.com'), { authorization: 'Bearer test-chatsvcagg-token' });
-  assert.deepEqual(await session.endpoints(), { chatService: 'https://chat.example.test', csa: 'https://teams.microsoft.com/api/csa/test' });
+  assert.deepEqual(await session.endpoints(), { chatService: 'https://chat.example.test', csa: 'https://teams.microsoft.com/api/csa/test', urlp: 'https://urlp.example.test/urlp' });
   await session.headers('chatService');
   await session.headers('csa');
 

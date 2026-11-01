@@ -5,8 +5,10 @@
  * Plain text or markdown to Teams HTML, in the shape the Teams client itself produces. Blocks: blank
  * lines separate paragraphs and single newlines become `<br>`; `#` headings (`#`/`##` -> h2, deeper
  * -> h3), `>` quotes, `-`/`*`/`+` and `1.` lists (nested by indentation), `|` tables with a `---`
- * separator row and fenced code blocks with an optional language. Inline: `**bold**`, `*italic*`,
- * `` `code` ``, `[text](url)` and bare URLs; links only with http or https (anything else stays literal text).
+ * separator row and fenced code blocks with an optional language. A line of `---`, `***` or `___` is a
+ * horizontal rule. Inline: `**bold**`, `*italic*`, `` `code` ``, `[text](url)` and bare URLs; links only with
+ * http or https (anything else stays literal text). Markdown images are not left as external `<img>` tags:
+ * `maskMarkdownImages` lifts them out so the sender can upload them.
  */
 export function toTeamsHtml(text: string): string {
   return blocks(text.replace(/\r\n?/g, '\n').split('\n'), { codeBlocks: 0 });
@@ -18,7 +20,7 @@ const QUOTE = /^\s*>\s?(.*)$/;
 const ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
 const RULE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
-const TABLE_SEPARATOR = /^\s*\|(\s*:?-+:?\s*\|)+\s*$/;
+const TABLE_SEPARATOR = /^\s*\|(?:\s*:?-{1,}:?\s*\|)+\s*$/;
 
 function blocks(lines: string[], state: { codeBlocks: number }): string {
   let html = '';
@@ -67,7 +69,7 @@ function blocks(lines: string[], state: { codeBlocks: number }): string {
       html += list(take((next) => next.trim() !== '' && (ITEM.test(next) || indent(next) > indent(line))), state);
     } else if (TABLE_ROW.test(line) && TABLE_SEPARATOR.test(lines[index + 1] ?? '')) {
       const [header, , ...rows] = take((next) => TABLE_ROW.test(next));
-      html += `<table><tbody>${row(header!, 'th')}${rows.map((next) => row(next, 'td')).join('')}</tbody></table>`;
+      html += `<table><tbody>${row(header!, true)}${rows.map((next) => row(next, false)).join('')}</tbody></table>`;
     } else {
       const paragraph = take((next) => next.trim() !== '' && !startsBlock(next));
       if (paragraph.length === 0) paragraph.push(lines[index++]!); // a table row without separator
@@ -95,9 +97,73 @@ function list(lines: string[], state: { codeBlocks: number }): string {
   return `<${tag}>${items.map(({ text, children }) => `<li>${inline(text)}${children.length ? blocks(children, state) : ''}</li>`).join('')}</${tag}>`;
 }
 
-function row(line: string, cell: 'th' | 'td'): string {
-  const cells = line.trim().slice(1, -1).split('|');
-  return `<tr>${cells.map((value) => `<${cell}>${inline(value.trim())}</${cell}>`).join('')}</tr>`;
+function row(line: string, header: boolean): string {
+  const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+  return `<tr>${cells.map((value) => {
+    const content = inline(value.trim());
+    const body = header && content ? `<strong>${content}</strong>` : content;
+    // Teams shows cell text that sits in a paragraph; a bare text node in <td> does not.
+    return `<td><p>${body || '&nbsp;'}</p></td>`;
+  }).join('')}</tr>`;
+}
+
+export interface MarkdownImageRef {
+  alt: string;
+  /** http(s) URL or a local path with an image extension. */
+  target: string;
+  kind: 'remote' | 'file';
+  /** Private-use placeholder left in the text; the sender replaces it after uploading. */
+  marker: string;
+}
+
+const MARKDOWN_IMAGE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+const LOCAL_IMAGE = /\.(?:png|jpe?g|gif|webp)$/i;
+
+/**
+ * Replaces sendable markdown images with placeholders and leaves every other `![...](...)` as text.
+ * Code fences and inline code are not images. With no images, the text is returned unchanged.
+ */
+export function maskMarkdownImages(text: string): { text: string; images: MarkdownImageRef[] } {
+  const normalized = text.replace(/\r\n?/g, '\n');
+  const images: MarkdownImageRef[] = [];
+  let serial = 0;
+  const markerFor = (index: number) => `\uE000teamscli-image-${serial}-${index}\uE001`;
+  while (normalized.includes(markerFor(0))) serial++;
+
+  let fenced = false;
+  const lines = normalized.split('\n').map((line) => {
+    if (FENCE.test(line)) {
+      fenced = !fenced;
+      return line;
+    }
+    if (fenced) return line;
+    return line.split(/(`[^`]*`)/g).map((part, index) => {
+      if (index % 2 === 1) return part;
+      return part.replace(MARKDOWN_IMAGE, (whole, alt: string, target: string) => {
+        const kind = imageKind(target);
+        if (!kind) return whole;
+        const marker = markerFor(images.length);
+        images.push({ alt, target, kind, marker });
+        return marker;
+      });
+    }).join('');
+  });
+  return images.length === 0 ? { text, images } : { text: lines.join('\n'), images };
+}
+
+function imageKind(target: string): MarkdownImageRef['kind'] | null {
+  if (/^https?:\/\//i.test(target)) {
+    try {
+      const url = new URL(target);
+      if ((url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password) return 'remote';
+    } catch {
+      return null;
+    }
+    return null;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) return null;
+  const path = target.split(/[?#]/)[0] ?? target;
+  return LOCAL_IMAGE.test(path) ? 'file' : null;
 }
 
 function indent(line: string): number {

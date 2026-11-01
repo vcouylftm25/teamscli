@@ -1,6 +1,6 @@
-import { CliError } from '../../errors.ts';
 import { readFileSync, statSync } from 'node:fs';
 import { basename, extname } from 'node:path';
+import { CliError } from '../../errors.ts';
 import type { Message } from '../../models.ts';
 import { readIdentity } from '../../auth/identity.ts';
 import { databasePath } from '../../runtime/paths.ts';
@@ -44,7 +44,7 @@ const command: Command<SendResult> = {
     quote: { valueName: 'ID', description: 'Quote this locally stored chat message.' },
     mention: { valueName: 'PERSON', description: 'Mention a person from the local data; may be repeated.' },
     subject: { valueName: 'TEXT', description: 'Subject (large title) of a new channel post.' },
-    'link-previews': { description: 'Attach link preview cards (title, description, image) for links in the text.' },
+    'link-previews': { description: 'Attach one link preview card. Teams shows a single card; --preview-link chooses which.' },
     'preview-link': { valueName: 'URL', description: 'Choose which link gets the single preview card; must match a link in the text.' },
     image: { valueName: 'PATH', description: 'Upload an inline image; may be repeated.' },
     'link-icons': { description: 'Add each site favicon as a small inline image before its links.' },
@@ -118,7 +118,8 @@ const command: Command<SendResult> = {
         ...(values['link-previews'] === true ? { linkPreviews: true } : {}),
         ...(previewLink ? { previewLink } : {}),
         ...(values['link-icons'] === true ? { linkIcons: true } : {}),
-        ...((values['link-icons'] === true || values['link-previews'] === true) ? { fetch: ctx.fetch } : {}),
+        fetch: ctx.fetch,
+        readFile: (path) => new Uint8Array(readFileSync(path)),
         ...(images.length > 0 ? { images } : {}),
         ...(quoted ? { quote: { id: quoted.id, senderId: quoted.senderId!, senderName: quoted.senderName!, text: quoted.text } } : {}),
       });
