@@ -6,6 +6,7 @@ import type { Endpoints, TeamsClient } from './client.ts';
 import { escapeHtml, maskMarkdownImages, quoteHtml, toTeamsHtml, toTeamsHtmlWithMentions, type MarkdownImageRef, type PersonMention, type QuotedMessage } from './compose.ts';
 import { uploadImage, type UploadedImage } from './files.ts';
 import { fetchLinkIcon, LINK_ICON_SIZE } from './link-icons.ts';
+import { withLinkEmojis } from './link-emojis.ts';
 
 export interface SendTextOptions {
   conversationId: string;
@@ -18,6 +19,8 @@ export interface SendTextOptions {
   linkPreviews?: boolean;
   previewLink?: string;
   linkIcons?: boolean;
+  /** Puts a small emoji (🔗, 🛡️, 💻, 📄, 📰) before each link; ignored when `linkIcons` is on. */
+  linkEmojis?: boolean;
   /** Adds the link's site (`github.com`) in small grey text after each link. */
   linkSources?: boolean;
   /** Tighter layout; see `ComposeOptions.compact`. */
@@ -28,7 +31,7 @@ export interface SendTextOptions {
   images?: Array<{ name: string; format: string; data: Uint8Array<ArrayBuffer> }>;
 }
 
-export async function sendText(client: TeamsClient, endpoints: Endpoints, { conversationId, replyTo, channelPost, text, quote, mentions, subject, linkPreviews, previewLink, linkIcons, linkSources, compact, fetch: fetcher, readFile, images }: SendTextOptions): Promise<{ clientMessageId: string; message: Message | null }> {
+export async function sendText(client: TeamsClient, endpoints: Endpoints, { conversationId, replyTo, channelPost, text, quote, mentions, subject, linkPreviews, previewLink, linkIcons, linkEmojis, linkSources, compact, fetch: fetcher, readFile, images }: SendTextOptions): Promise<{ clientMessageId: string; message: Message | null }> {
   const clientMessageId = newClientMessageId();
   const targetId = replyTo === undefined ? conversationId : `${conversationId};messageid=${replyTo}`;
   const masked = maskMarkdownImages(text);
@@ -52,6 +55,8 @@ export async function sendText(client: TeamsClient, endpoints: Endpoints, { conv
     const icons = await withLinkIcons(client, body.content, conversationId, fetcher);
     body.content = icons.content;
     amsreferences.push(...icons.imageIds);
+  } else if (linkEmojis) {
+    body.content = withLinkEmojis(body.content, decodeHref);
   }
   if (linkPreviews) {
     const previews = await withLinkPreviews(client, body.content, endpoints, previewLink, fetcher);

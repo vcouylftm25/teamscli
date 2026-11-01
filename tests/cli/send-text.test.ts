@@ -21,12 +21,36 @@ test('send text help documents preview and inline image options', async () => {
   const run = await runTestCli(['send', 'text', '--help']);
   assert.equal(run.code, 0);
   assert.match(run.stdout, /--link-previews\s+Attach one link preview card\./);
-  assert.match(run.stdout, /--link-icons\s+Add each site favicon as a small inline image before its links\./);
+  assert.match(run.stdout, /--link-icons\s+Add each site favicon as a small inline image before its links/);
+  assert.match(run.stdout, /--link-emojis\s+Put a small emoji before each link/);
   assert.match(run.stdout, /--link-sources\s+Show the site/);
   assert.match(run.stdout, /--compact\s+Tighter spacing/);
-  assert.match(run.stdout, /--radar\s+Newsletter preset/);
+  assert.match(run.stdout, /--radar\s+Newsletter preset: --compact, --link-emojis and --link-sources/);
   assert.match(run.stdout, /--preview-link URL\s+Choose which link gets the single preview card/);
   assert.match(run.stdout, /--image PATH\s+Upload an inline image; may be repeated\./);
+});
+
+test('--radar puts an emoji and the grey source on each link and never fetches or uploads a favicon', async (t) => {
+  const home = signedInHome();
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const chatId = 'chat-radar';
+  seed(home, [aConversation({ id: chatId, title: 'Radar group' })]);
+  const fake = authenticatedFetch([
+    { method: 'POST', url: `${chatService}/v1/users/ME/conversations/${chatId}/messages`, status: 201, json: {} },
+    { url: messagePage(chatId), json: { messages: [], _metadata: {} } },
+  ], (clientMessageId) => rawMessage(chatId, '1767261600030', clientMessageId));
+
+  const text = '[Alerta](https://www.cisa.gov/news-events/alerts/x) e [repo](https://github.com/acme/tool) e [post](https://example.com/page)';
+  const run = await runTestCli(['--store', home, '--account', 'work', '--json', 'send', 'text', '--to', chatId, '--radar', '--message', text], { env, fetch: fake.fetch });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.equal(fake.calls.some(({ url }) => /favicon|asm\.skype\.com|cisa\.gov|github\.com\/acme|example\.com/.test(url)), false, 'no icon download or AMS upload');
+  const body = chatCalls(fake.calls)[0]?.body as Record<string, unknown>;
+  assert.equal('amsreferences' in body, false);
+  assert.equal(String(body.content).includes('<img'), false);
+  assert.equal(body.content, '<p>🛡️&nbsp;<a href="https://www.cisa.gov/news-events/alerts/x">Alerta</a> <span style="font-size:12px;color:#616161">· cisa.gov</span> e '
+    + '💻&nbsp;<a href="https://github.com/acme/tool">repo</a> <span style="font-size:12px;color:#616161">· github.com</span> e '
+    + '🔗&nbsp;<a href="https://example.com/page">post</a> <span style="font-size:12px;color:#616161">· example.com</span></p>');
 });
 
 test('send text resolves --to, escapes user HTML, and stores the returned message', async (t) => {

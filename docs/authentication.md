@@ -177,7 +177,7 @@ Validated: a new process read the blob, renewed the token and saved the rotated 
 - Verified quotes: no solution. 10 combinations of auth, host, envelope, headers and `qtdMsgs` tested (see "Quotes: the warning"); none removes the warning, and the server stores the same content as for the native quote. Still to separate "server flag per app" from "client local state": view the native quote in another client (mobile or desktop). If it is a per-app flag, only the Teams web app verifies and the CLI documents the limitation.
 - Mentions: send format confirmed and reproduced by the CLI; `send text --mention` implemented. Still to confirm the recipient notification, several mentions in one message (increasing `itemid`?) and mentions of channels, teams or groups.
 - Channel post subject: the CLI sends `properties.subject` on a new channel post (the field is present, empty, in the client envelope). Not checked in the Teams UI.
-- Link preview cards, favicon icons and uploaded markdown images: the send body matches captured message shape (`properties.links`, AMS images). Not re-checked in the Teams UI.
+- Link preview cards, favicon icons and uploaded markdown images: the send body matches captured message shape (`properties.links`, AMS images). A live post showed favicons drawn inside a large grey placeholder box, so `--radar` uses text emojis (`--link-emojis`) instead.
 - Real time: Teams web receives events over a websocket. Not investigated yet; polling `syncState` works as an alternative.
 - Behavior under rate limiting during an initial sync with real volume.
 

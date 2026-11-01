@@ -350,3 +350,17 @@ test('compact radar post keeps every word, drops empty sections and puts icon an
   assert.match(content, /^<h3>🤖 IA<\/h3><p><strong>Item um<\/strong><br>O que aconteceu/);
   assert.match(content, /<\/blockquote><p><img [^>]*width="16" height="16"[^>]*>&nbsp;<a href="https:\/\/cursor\.com\/blog\/a">Cursor Blog: aviso<\/a> <span style="font-size:12px;color:#616161">· cursor\.com<\/span><\/p>$/);
 });
+
+test('linkEmojis puts an emoji before each link without any request, and linkIcons wins when both are on', async () => {
+  const channel = '19:emoji@example.test';
+  const fake = fakeFetch([
+    { method: 'POST', url: `${TEST_ENDPOINTS.chatService}/v1/users/ME/conversations/${encodeURIComponent(channel)}/messages`, status: 201, json: {} },
+    { url: messageUrl(channel), json: { messages: [], _metadata: {} } },
+  ]);
+  const client = createTeamsClient({ fetch: fake.fetch, session: fakeSession() });
+  await sendText(client, TEST_ENDPOINTS, { conversationId: channel, channelPost: true, text: '[Blog](https://cursor.com/blog/a)', compact: true, linkEmojis: true, linkSources: true, fetch: fake.fetch });
+  const posts = fake.calls.filter((call) => call.method === 'POST' && call.url.endsWith('/messages'));
+  assert.equal(fake.calls.filter((call) => call.method !== 'POST' && !call.url.includes('/messages')).length, 0);
+  const content = String((posts[0]?.body as Record<string, unknown>).content);
+  assert.equal(content, '<p>📰&nbsp;<a href="https://cursor.com/blog/a">Blog</a> <span style="font-size:12px;color:#616161">· cursor.com</span></p>');
+});
