@@ -17,7 +17,7 @@ type SendResult = Message | { sent: true; clientMessageId: string };
 const command: Command<SendResult> = {
   name: 'send text',
   summary: 'Send a text message to a chat or reply in a channel thread',
-  usage: '(--to TARGET | --chat ID | --channel ID) [TEXT | --message TEXT] [--mention PERSON] [--reply-to ID] [--quote ID]',
+  usage: '(--to TARGET | --chat ID | --channel ID) [TEXT | --message TEXT] [--mention PERSON] [--reply-to ID] [--quote ID] [--subject TEXT] [--link-previews]',
   arguments: '[TEXT]  Optional message text after the destination options',
   options: {
     to: { type: 'string' },
@@ -27,6 +27,8 @@ const command: Command<SendResult> = {
     'reply-to': { type: 'string' },
     quote: { type: 'string' },
     mention: { type: 'string', multiple: true },
+    subject: { type: 'string' },
+    'link-previews': { type: 'boolean' },
   },
   optionHelp: {
     to: { valueName: 'TARGET', description: 'Chat or person to message by id or name.' },
@@ -36,6 +38,8 @@ const command: Command<SendResult> = {
     'reply-to': { valueName: 'ID', description: 'Reply to this channel message.' },
     quote: { valueName: 'ID', description: 'Quote this locally stored chat message.' },
     mention: { valueName: 'PERSON', description: 'Mention a person from the local data; may be repeated.' },
+    subject: { valueName: 'TEXT', description: 'Subject (large title) of a new channel post.' },
+    'link-previews': { description: 'Attach link preview cards (title, description, image) for links in the text.' },
   },
   maxPositionals: 1,
   mutates: true,
@@ -97,6 +101,8 @@ const command: Command<SendResult> = {
         channelPost: conversation.kind === 'channel' && replyTo === undefined,
         text: messageText,
         ...(mentions.length > 0 ? { mentions } : {}),
+        ...(option(values, 'subject') ? { subject: option(values, 'subject') } : {}),
+        ...(values['link-previews'] === true ? { linkPreviews: true } : {}),
         ...(quoted ? { quote: { id: quoted.id, senderId: quoted.senderId!, senderName: quoted.senderName!, text: quoted.text } } : {}),
       });
       if (!result.message) {
